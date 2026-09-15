@@ -1,0 +1,62 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nyashavee
+      POSTGRES_PASSWORD: nyashavee_dev_password
+      POSTGRES_DB: nyashavee
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nyashavee -d nyashavee"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: desktop-app:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${NYASHAVEE_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://nyashavee:nyashavee_dev_password@postgres:5432/nyashavee
+      AUTH_SECRET: ${AUTH_SECRET:-nyashavee-dev-secret-change-in-production}
+      AUTH_URL: http://localhost:${NYASHAVEE_PORT:-3000}
+      NEXT_PUBLIC_APP_URL: http://localhost:${NYASHAVEE_PORT:-3000}
+      # Optional message-delivery providers (leave empty to keep the outbox queued)
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-}
+      SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
+      REDIS_URL: redis://redis:6379
+      TRUST_PROXY: "false"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+      - uploads_data:/app/data/uploads
+    # The image's CMD already pushes the Postgres schema and seeds — no
+    # command override needed here.
+
+volumes:
+  postgres_data:
+  uploads_data:

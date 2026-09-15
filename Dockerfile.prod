@@ -1,0 +1,44 @@
+# Production image — multi-stage build producing a slim standalone server.
+# Usage: docker compose -f docker-compose.prod.yml up --build
+
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+FROM node:22-alpine AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# The production client targets Postgres.
+RUN npx prisma generate --schema prisma/schema.postgres.prisma
+# AUTH_SECRET is checked at module load when NODE_ENV=production — the build
+# only needs a placeholder; the real secret is injected at container runtime.
+# NOTE: run `next build` directly — the `npm run build` script re-generates the
+# Prisma client from the SQLite dev schema, which would overwrite the Postgres
+# client generated above.
+RUN AUTH_SECRET=build-time-placeholder npx next build
+
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
+
+RUN addgroup -S app && adduser -S app -G app \
+  # Prisma CLI for `migrate deploy`; tsx for the optional seed step
+  && npm i -g prisma@6.19.0 tsx --omit=dev \
+  && mkdir -p /app/data/uploads && chown -R app:app /app/data
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/prisma ./prisma
+COPY tsconfig.json ./tsconfig.json
+COPY docker/prod-entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+USER app
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1
+
+ENTRYPOINT ["entrypoint.sh"]

@@ -1,0 +1,66 @@
+# Production compose — no source bind-mounts; the app runs the standalone
+# Next.js build. Requires AUTH_SECRET (and optionally RESEND_*/SMS_* env vars)
+# in a .env file next to this file or exported in the environment.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nyashavee}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-nyashavee}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nyashavee} -d ${POSTGRES_DB:-nyashavee}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: desktop-app:prod
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${NYASHAVEE_PORT:-3000}:3000"
+    environment:
+      # Define this complete, URL-encoded connection string in .env. Keeping it
+      # whole avoids corrupting passwords containing URL-reserved characters.
+      DATABASE_URL: "${DATABASE_URL:?Set an encoded DATABASE_URL in .env}"
+      AUTH_SECRET: "${AUTH_SECRET:?Set AUTH_SECRET in .env — generate with: openssl rand -base64 32}"
+      AUTH_URL: "${AUTH_URL:-http://localhost:3000}"
+      NEXT_PUBLIC_APP_URL: "${NEXT_PUBLIC_APP_URL:-http://localhost:3000}"
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-}
+      SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
+      RUN_SEED: ${RUN_SEED:-0}
+      DEMO_SEED_ACKNOWLEDGEMENT: ${DEMO_SEED_ACKNOWLEDGEMENT:-}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    volumes:
+      - uploads_data:/app/data/uploads
+
+volumes:
+  postgres_data:
+  uploads_data:
+  redis_data:

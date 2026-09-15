@@ -1,0 +1,10 @@
+.next/
+node_modules/
+tsconfig.tsbuildinfo
+data/uploads/
+data/backups/
+.env
+.env.local
+prisma/dev.db
+prisma/dev.db-journal
+*.log
